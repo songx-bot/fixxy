@@ -1,0 +1,256 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+
+// Users – stores all user accounts
+model User {
+  id               String         @id @default(cuid())
+  phone            String?        @unique
+  email            String?        @unique
+  passwordHash     String
+  fullName         String
+  role             Role           @default(CUSTOMER) // CUSTOMER, TECHNICIAN, SELLER, ADMIN
+  verifiedPhone    Boolean        @default(false)
+  verifiedEmail    Boolean        @default(false)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  otps             OTP[]
+  technician       Technician?
+  products         Product[]
+  repairRequests   RepairRequest[] @relation("CustomerRepairs")
+  repairsAsTech    RepairRequest[] @relation("TechnicianRepairs")
+  orders           Order[]
+  reviews          Review[]       @relation("UserReviews")
+  technicianReviews Review[]     @relation("TechnicianReviews")
+  disputes         Dispute[]
+  chatMessages     ChatMessage[]
+  warranties       Warranty[]
+  auditLogs        AuditLog[]      @relation("UserAudit")
+  adminAuditLogs   AuditLog[]      @relation("AdminAudit")
+
+  @@index([phone])
+  @@index([email])
+  @@index([role])
+}
+
+// OTP codes for phone/email verification
+model OTP {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  code      String   // 6-digit numeric string
+  type      OTPType  // PHONE or EMAIL
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([code])
+}
+
+// Technician profile – extends User
+model Technician {
+  userId        String   @id
+  user          User     @relation(fields: [userId], references: [id])
+  specialization String
+  hourlyRate    Float
+  experience    Int      // years of experience
+  certificationUrl String? // Cloudinary URL
+  isVerified    Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Products – for marketplace
+model Product {
+  id            String   @id @default(cuid())
+  sellerId      String
+  seller        User     @relation(fields: [sellerId], references: [id])
+  name          String
+  category      String
+  condition     String   // e.g., "New", "Used", "Refurbished"
+  price         Float
+  stock         Int      @default(1)
+  description   String?
+  images        String[] // array of Cloudinary URLs
+  warrantyPeriod Int?    // in months
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  orderItems    OrderItem[]
+  reviews       Review[]
+  warranties    Warranty[]
+}
+
+// Repair requests
+model RepairRequest {
+  id            String   @id @default(cuid())
+  customerId    String
+  customer      User     @relation("CustomerRepairs", fields: [customerId], references: [id])
+  technicianId  String?
+  technician    User?    @relation("TechnicianRepairs", fields: [technicianId], references: [id])
+  deviceModel   String
+  issue         String
+  status        RepairStatus @default(PENDING) // PENDING, ASSIGNED, IN_PROGRESS, COMPLETED, CANCELLED
+  quote         Float?
+  scheduledTime DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  disputes      Dispute[]
+  chatMessages  ChatMessage[]
+}
+
+// Orders – purchase of products or services
+model Order {
+  id            String   @id @default(cuid())
+  customerId    String
+  customer      User     @relation(fields: [customerId], references: [id])
+  totalAmount   Float
+  status        OrderStatus @default(PENDING) // PENDING, PAID, SHIPPED, DELIVERED, CANCELLED
+  paymentId     String?  // Paystack transaction reference
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  items         OrderItem[]
+  transactions  Transaction[]
+}
+
+model OrderItem {
+  id          String   @id @default(cuid())
+  orderId     String
+  order       Order    @relation(fields: [orderId], references: [id])
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+  quantity    Int
+  price       Float    // price at time of order
+  createdAt   DateTime @default(now())
+}
+
+// Transactions – payment records
+model Transaction {
+  id          String   @id @default(cuid())
+  orderId     String
+  order       Order    @relation(fields: [orderId], references: [id])
+  amount      Float
+  reference   String   @unique // Paystack reference
+  status      String   // success, failed, pending
+  createdAt   DateTime @default(now())
+}
+
+// Reviews – for products and technicians
+model Review {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation("UserReviews", fields: [userId], references: [id])
+  productId   String?
+  product     Product? @relation(fields: [productId], references: [id])
+  technicianId String?
+  technician  User?    @relation("TechnicianReviews", fields: [technicianId], references: [id])
+  rating      Int      // 1-5
+  comment     String?
+  createdAt   DateTime @default(now())
+}
+
+// Disputes – for repairs
+model Dispute {
+  id            String   @id @default(cuid())
+  repairId      String
+  repair        RepairRequest @relation(fields: [repairId], references: [id])
+  raisedBy      String
+  user          User     @relation(fields: [raisedBy], references: [id])
+  reason        String
+  status        DisputeStatus @default(OPEN) // OPEN, RESOLVED, CLOSED
+  resolution    String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Chat messages (real-time via Socket.io)
+model ChatMessage {
+  id          String   @id @default(cuid())
+  repairId    String
+  repair      RepairRequest @relation(fields: [repairId], references: [id])
+  senderId    String
+  sender      User     @relation(fields: [senderId], references: [id])
+  message     String
+  createdAt   DateTime @default(now())
+}
+
+// Warranties – for products sold
+model Warranty {
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  startDate   DateTime
+  endDate     DateTime
+  status      WarrantyStatus @default(ACTIVE)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Audit logs – track admin actions
+model AuditLog {
+  id          String   @id @default(cuid())
+  adminId     String
+  admin       User     @relation("AdminAudit", fields: [adminId], references: [id])
+  userId      String?
+  user        User?    @relation("UserAudit", fields: [userId], references: [id])
+  action      String
+  details     Json?
+  createdAt   DateTime @default(now())
+}
+
+// Enums
+enum Role {
+  CUSTOMER
+  TECHNICIAN
+  SELLER
+  ADMIN
+}
+
+enum OTPType {
+  PHONE
+  EMAIL
+}
+
+enum RepairStatus {
+  PENDING
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum DisputeStatus {
+  OPEN
+  RESOLVED
+  CLOSED
+}
+
+enum WarrantyStatus {
+  ACTIVE
+  EXPIRED
+  VOIDED
+}
